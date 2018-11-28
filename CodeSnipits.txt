@@ -1,0 +1,424 @@
+**GOOD ARTICLE : https://developer.okta.com/blog/2018/04/26/build-crud-app-aspnetcore-angular **
+
+******* Entity Framework connection ********
+
+1. Create a Model Class of Object to match table
+
+    public class Employee
+    {
+        public Int32 Id { get; set; }
+        [Required]
+        public string FirstName { get; set; }
+        public string LastName { get; set; }
+        [NotMapped]
+        private string _fullName;
+        [NotMapped]
+        public string FullName
+        {
+            get
+            {
+                if (_fullName == null)
+                {
+                    _fullName = FirstName + " " + LastName;
+                }
+                return _fullName;
+            }
+            set { _fullName = value; }
+        }
+     }
+
+2. Create DataContext Class
+
+    public class EmployeeDataContext : DbContext
+    {
+        public DbSet<Employee> Employees { get; set; }
+
+        public EmployeeDataContext(DbContextOptions<EmployeeDataContext> options) : base(options)
+        {
+            Database.EnsureCreated();
+        }
+    }
+    
+3. Startup Class : Add constructor for configuation setup
+
+        public Startup(IConfiguration configuration, IHostingEnvironment env)
+        {
+            //Configuration = configuration;
+            Configuration = new ConfigurationBuilder()
+                    .AddEnvironmentVariables()
+                    .AddJsonFile(env.ContentRootPath + "/config.json")
+                    .AddJsonFile(env.ContentRootPath + "/config.development.json", true)
+                    .Build();
+        }
+        
+4. Startup Class : Configure Services to inject DataContext to App
+
+            services.AddDbContext<EmployeeDataContext>(options =>
+            {
+                var connectionString = Configuration.GetConnectionString("EmployeeDataContext");
+                options.UseSqlServer(connectionString);
+            });
+            
+5. Inject DataContext into Controller to pull data from DB
+
+        private readonly EmployeeDataContext _db;
+
+        public HomeController(EmployeeDataContext db)
+        {
+            _db = db;
+        }
+        
+        [HttpGet]
+        public IEnumerable<Models.Employee> Get()
+        {
+            return _db.Employee.OrderByDescending(x => x.FirstName).ToArray();
+        }
+
+        [HttpPost]
+        public async Task<IActionResult> Post([FromBody]Models.Employee employee)
+        {
+            context.Employees.Add(employee);
+            await _db.SaveChangesAsync();
+            return Ok(employee);
+        }
+
+        [HttpPut("{id}")]
+        public async Task<IActionResult> Put(int id, [FromBody]Models.Employee employee)
+        {
+            if (id != employee.ID)
+                return BadRequest();
+
+            context.Entry(employee).State = EntityState.Modified;
+
+            await _db.SaveChangesAsync();
+
+            return Ok(employee);
+        }        
+        
+        
+
+
+******* Angular Call Web Api to return data ********
+
+1. Call API, subscribe to results (Get Data, assign to arrays)
+
+	export class GetDataComponent {	    
+	    public employees: any[];
+	    public customers: any[];
+	    public cacheCustomers: any[];
+
+	    employee = {}
+
+	    constructor(private api: ApiService) {
+	    	this.employees = api.getEmployees() as any[];
+	    	this.customers = api.getCustomers() as any[];
+		this.cacheCustomers = this.customers;
+	    	
+	    }
+
+	    ngOnInit() {
+		
+	    }
+
+            /* OR THIS */
+	    constructor(http: Http, @Inject('BASE_URL') baseUrl: string) {
+	    
+		http.get(baseUrl + 'api/SampleData/GetEmployees').subscribe(result => {
+		    this.employees = result.json() as any[];
+		}, error => console.error(error));
+		
+		http.get(baseUrl + 'api/SampleData/GetCustomers').subscribe(result => {
+		    this.customers = result.json() as any[];
+		    this.cacheCustomers = this.customers;
+		}, error => console.error(error));
+	    }
+	    /************/	    
+	    
+	    
+	    
+	}
+	
+2. Fill Dropdown List & Fill Additional Filtered list based onChange event
+
+2a. HTML/Typescript
+
+	<div>
+	    <label>Employees: </label>
+	    <select [(ngModel)]="selectedOption" (change)="fillCustomers($event.target.value)">
+		<option value="0">--All--</option>
+		<option *ngFor="let emp of employees" value={{Id}}>
+		    {{FullName}}
+		</option>
+	    </select>
+	</div>
+	<div>
+		<!-- ******** HOW DO I GET SELECTED VALUE OF DROP DOWN, then Pass to FORM to update -->
+		<button (click)="editEmployee()">Edit Employee Selected</button>
+	</div>
+	
+	<div>
+	    <label>Customers: </label>
+	    <select>
+		<option value="0">--All--</option>
+		<option *ngFor="let cust of customers" value={{Id}}>
+		    {{CustomerName}}
+		</option>
+	    </select>
+	</div>	
+	
+2b. Typescript Component, populate dropdown
+
+    fillCustomers(filterVal: any) {
+        if (filterVal == "0")
+            this.customers = this.cacheCustomers;
+        else
+        this.customers = this.cacheCustomers.filter((item) => item.EmployeeId == filterVal);
+    }
+    
+    **Component Code**
+    import { Router } from '@angular/router';
+    selectedOption: string;
+    
+      editEmployee() {
+        this.router.navigate(['/employee/' + this.selectedOption]);
+        OR
+        this.router.navigateByUrl(['/employee/' + this.selectedOption]);
+  	}
+
+
+************* ASP.NET Api for CRUD *************
+
+1. Get Data for the FORM
+
+	// GET: api/Employee
+        [HttpGet]
+        public IEnumerable<Employee> GetEmployee()
+        {
+            return _context.Employee;
+        }
+
+        // GET: api/Employee/5
+        [HttpGet("{id}")]
+        public async Task<IActionResult> GetEmployee([FromRoute] int id)
+        {
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ModelState);
+            }
+
+            var employee = await _context.Employee.SingleOrDefaultAsync(m => m.Id == id);
+
+            if (employee == null)
+            {
+                return NotFound();
+            }
+
+            return Ok(employee);
+        }
+
+2. Update method (_context = DataContext being injected into Controller (i.e. _db ) 
+
+	// PUT: api/Employees/5
+        [HttpPut("{id}")]
+        public async Task<IActionResult> PutEmployee([FromRoute] int id, [FromBody] Employee employee)
+        {
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ModelState);
+            }
+
+            if (id != employee.Id)
+            {
+                return BadRequest();
+            }
+
+            _context.Entry(employee).State = EntityState.Modified;
+
+            try
+            {
+                await _context.SaveChangesAsync();
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                             
+            }
+
+            return NoContent();
+        }
+
+3. Add new method
+
+
+        // POST: api/Employees
+        [HttpPost]
+        public async Task<IActionResult> PostEmployee([FromBody] Employee employees)
+        {
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ModelState);
+            }
+
+            _context.Employee.Add(employee);
+            await _context.SaveChangesAsync();
+
+            return CreatedAtAction("GetEmployee", new { id = employee.Id }, employee);
+        }
+        
+4. Delete Method        
+
+        // DELETE: api/employee/5
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> DeleteEmployee([FromRoute] int id)
+        {
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ModelState);
+            }
+
+            var employee = await _context.Employee.SingleOrDefaultAsync(m => m.Id == id);
+            if (employee == null)
+            {
+                return NotFound();
+            }
+
+            _context.Employee.Remove(employee);
+            await _context.SaveChangesAsync();
+
+            return Ok(employee);
+        }
+        
+        
+************* Angular Form for CRUD *************        
+
+1. Add "api.service.ts" file to connect to Web Api
+
+	import { Injectable } from '@angular/core'
+	import { HttpClient } from '@angular/common/http'
+	import { Subject} from 'rxjs'
+
+	@Injectable()
+	export class ApiService {
+	
+
+	    private selectedEmployee = new Subject<any>();
+	    employeeSelected = this.selectedEmployee.asObservable();
+
+	    constructor(private http: HttpClient) {}
+
+	    getEmployees(){
+		return this.http.get('http://localhost:63100/api/employees');
+	    }
+
+	    postEmployee(employee){
+		this.http.post('http://localhost:63100/api/employees', employee).subscribe(res => {
+		    console.log(res)
+		})
+	    }
+
+	    putEmployee(employee) {
+		this.http.put(`http://localhost:63100/api/employees/${employee.id}`, employee).subscribe(res => {
+		    console.log(res)
+		}) 
+	    }
+
+	    selectEmployee(employee) {
+		this.selectedEmployee.next(employee)
+	    }
+	}
+	
+2. Add service connection to our Employee component
+
+	import { Component } from '@angular/core'
+	import { ApiService } from './api.service'
+
+	@Component({
+	    selector: 'question',
+	    templateUrl: './question.component.html'
+	})
+	export class EmployeeComponent {
+
+	    employee = {}
+
+	    constructor(private api: ApiService) {}
+
+	    ngOnInit() {
+		this.api.employeeSelected.subscribe(employee => this.employee = employee)
+	    }
+
+	    post(employee) {
+		this.api.postEmployee(employee)
+	    }
+	}
+	
+3. Create HTML for Component
+
+<md-card>
+    <md-card-title>
+        <span *ngIf="employee.id">Edit</span>
+        <span *ngIf="!employee.id">New</span>
+    </md-card-title>
+    <md-card-content>
+        <form>
+            <md-form-field class="fullWidth">
+                <input [(ngModel)]="employee.firstname" name="firstName" mdInput placeholder="First Name">
+            </md-form-field>
+        </form>
+    </md-card-content>
+    <md-card-actions>
+        <button *ngIf="employee.id" (click)="api.putEmployee(employee)" md-button>EDIT</button>
+        <button *ngIf="employee.id" (click)="employee = {}" md-button>NEW</button>
+        <button *ngIf="!employee.id" (click)="post(employee)" md-button>POST</button>
+    </md-card-actions>
+</md-card>
+
+4. Add Link from Dropdowns to each Form page for Add/Updates (add this code to click events of buttons where Dropdowns are)
+
+   <md-list-item class="clickLink" (click)="api.selectQuestion(question)"> {{question.text}} </md-list-item>
+
+
+*************** STYLE ***************************************************************** 
+
+Bootstrap Link
+
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/css/bootstrap.min.css" integrity="sha384-MCw98/SFnGE8fJT3GXwEOngsV7Zt27NXFoaoApmYm81iuXoPkFOJwJ8ERdknLPMO" crossorigin="anonymous">
+
+<form>
+  <div class="form-group">
+    <label for="exampleFormControlInput1">Email address</label>
+    <input type="email" class="form-control" id="exampleFormControlInput1" placeholder="name@example.com">
+  </div>
+  <div class="form-group">
+    <label for="exampleFormControlSelect1">Example select</label>
+    <select class="form-control" id="exampleFormControlSelect1">
+      <option>1</option>
+      <option>2</option>
+      <option>3</option>
+      <option>4</option>
+      <option>5</option>
+    </select>
+  </div>
+</form> 
+
+<button type="button" class="btn btn-outline-primary">Primary</button>
+<button type="button" class="btn btn-outline-secondary">Secondary</button>
+<button type="button" class="btn btn-outline-success">Success</button>
+<button type="button" class="btn btn-outline-danger">Danger</button>
+<button type="button" class="btn btn-outline-warning">Warning</button>
+<button type="button" class="btn btn-outline-info">Info</button>
+<button type="button" class="btn btn-outline-light">Light</button>
+<button type="button" class="btn btn-outline-dark">Dark</button>
+
+
+***CARD FORMATTING***
+
+<div class="card">
+  <div class="card-header">
+    Featured
+  </div>
+  <div class="card-body">
+    <h5 class="card-title">Special title treatment</h5>
+    <p class="card-text">With supporting text below as a natural lead-in to additional content.</p>
+    <a href="#" class="btn btn-primary">Go somewhere</a>
+  </div>
+</div>
+
